@@ -2,17 +2,22 @@ package main
 
 import (
 	"crypto/aes"
+	"crypto/md5"
+	"encoding/hex"
 	"io"
 	"log"
 	"net"
+	"strconv"
 	"sync"
+	"time"
 
 	"./github.com/gorilla/websocket"
 )
 
 var (
-	wg  sync.WaitGroup
-	key []byte = []byte("sdf44w5ef784478468sdf")
+	wg sync.WaitGroup
+	// key []byte = []byte("sdf44w5ef784478468sdf")
+	key string = "sdf44w5ef784478468sdf"
 )
 
 func main() {
@@ -43,6 +48,7 @@ func main() {
 
 //处理请求
 func handleRequest(conn net.Conn) {
+
 	var (
 		web_conn *websocket.Conn
 		err      error
@@ -51,7 +57,7 @@ func handleRequest(conn net.Conn) {
 
 	log.Println("开始连接 websocket 服务器....")
 	//建立websocket 连接
-	if web_conn, _, err = websocket.DefaultDialer.Dial("ws://127.0.0.1:5000/ws", nil); err != nil {
+	if web_conn, _, err = websocket.DefaultDialer.Dial("ws://162.209.149.81:137/ws", nil); err != nil {
 		log.Println(err)
 		return
 	}
@@ -88,7 +94,7 @@ func readData(client net.Conn, server *websocket.Conn) {
 		// log.Println("收到客户端的消息", string(buff[:n]))
 
 		//step2:将数据写入服务端
-		if err = server.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], key)); err != nil {
+		if err = server.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(key))); err != nil {
 			log.Println("写出现问题:", err)
 			break
 		}
@@ -116,12 +122,21 @@ func writeData(client net.Conn, server *websocket.Conn) {
 
 		//step2: 将数据写入客户端
 		if len(buff) > 0 {
-			if _, err = client.Write(AesDecryptECB(buff, key)); err != nil {
+			if _, err = client.Write(AesDecryptECB(buff, GetNewPassword(key))); err != nil {
 				log.Println(err)
 				return
 			}
 		}
 	}
+}
+
+//每天生成新的密码
+func GetNewPassword(key string) []byte {
+	str := strconv.Itoa(time.Now().Day()) + key
+	h := md5.New()
+	h.Write([]byte(str))
+	return []byte(hex.EncodeToString(h.Sum(nil)))
+
 }
 
 // =================== ECB ======================

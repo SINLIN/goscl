@@ -1,9 +1,13 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"io"
 	"net"
+	"strconv"
 	"sync"
+	"time"
 
 	"crypto/aes"
 	"log"
@@ -21,12 +25,13 @@ var (
 
 	wg sync.WaitGroup
 
-	key []byte = []byte("sdf44w5ef784478468sdf")
+	// key []byte = []byte("sdf44w5ef784478468sdf")
+	key string = "sdf44w5ef784478468sdf"
 )
 
 func main() {
 	http.HandleFunc("/ws", wsHander)
-	http.ListenAndServe(":5000", nil)
+	http.ListenAndServe(":137", nil)
 }
 
 func wsHander(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +85,7 @@ func readData(client *websocket.Conn, server net.Conn) {
 
 		// log.Println("收到来自websocket消息:", string(data))
 		if len(data) > 0 {
-			if _, err = server.Write(AesDecryptECB(data, key)); err != nil {
+			if _, err = server.Write(AesDecryptECB(data, GetNewPassword(key))); err != nil {
 				log.Println(err)
 				return
 			}
@@ -112,11 +117,20 @@ func writeData(client *websocket.Conn, server net.Conn) {
 		// log.Println("收到shadowsocks的消息", string(buff[:n]))
 
 		//step2:将数据写入服务端
-		if err = client.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], key)); err != nil {
+		if err = client.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(key))); err != nil {
 			log.Println("写出现问题:", err)
 			break
 		}
 	}
+}
+
+//每天生成新的密码
+func GetNewPassword(key string) []byte {
+	str := strconv.Itoa(time.Now().Day()) + key
+	h := md5.New()
+	h.Write([]byte(str))
+	return []byte(hex.EncodeToString(h.Sum(nil)))
+
 }
 
 // =================== ECB ======================
