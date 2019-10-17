@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"io"
@@ -68,7 +69,7 @@ func wsHander(w http.ResponseWriter, r *http.Request) {
 
 }
 
-// 读数据
+// 读数据 websocket -> ss
 func readData(client *websocket.Conn, server net.Conn) {
 	var (
 		n    int
@@ -96,20 +97,21 @@ func readData(client *websocket.Conn, server net.Conn) {
 	}
 }
 
-//写数据
+//写数据 ss -> websocket
 func writeData(client *websocket.Conn, server net.Conn) {
 	var (
-		n    int
-		err  error
-		buff []byte
+		n      int
+		err    error
+		buff   []byte
+		buffer bytes.Buffer
 	)
 
 	defer wg.Done()
 
-	buff = make([]byte, 10*1024)
+	buff = make([]byte, 20*1024)
 
+	//step1:从客户端读取数据
 	for {
-		//step1:从客户端读取数据
 		if n, err = server.Read(buff); n == 0 || err == io.EOF {
 			log.Println("客户端信息读取完成")
 			break
@@ -117,12 +119,13 @@ func writeData(client *websocket.Conn, server net.Conn) {
 
 		//debug:打印信息
 		// log.Println("收到shadowsocks的消息", string(buff[:n]))
+		buffer.Write(buff[:n])
 
-		//step2:将数据写入服务端
-		if err = client.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(key))); err != nil {
-			log.Println("写出现问题:", err)
-			break
-		}
+	}
+	//step2:将数据写入服务端
+	if err = client.WriteMessage(websocket.TextMessage, AesEncryptECB(buffer.Bytes(), GetNewPassword(key))); err != nil {
+		log.Println("写出现问题:", err)
+
 	}
 }
 

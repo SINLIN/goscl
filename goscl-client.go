@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/md5"
 	"encoding/hex"
@@ -96,31 +97,32 @@ func handleRequest(conn net.Conn) {
 func readData(client net.Conn, server *websocket.Conn) {
 
 	var (
-		n    int
-		err  error
-		buff []byte
+		n      int
+		err    error
+		buff   []byte
+		buffer bytes.Buffer
 	)
 	defer wg.Done()
 
 	buff = make([]byte, 2048)
 
+	//step1:从客户端读取数据
 	for {
-		//step1:从客户端读取数据
 		if n, err = client.Read(buff); n == 0 || err == io.EOF {
 			log.Println("客户端信息读取完成")
 			break
 		}
-
+		buffer.Write(buff[:n])
 		//debug:打印信息
 		// log.Println("收到客户端的消息", string(buff[:n]))
 
-		//step2:将数据写入服务端
-		if err = server.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(key))); err != nil {
-			log.Println("写出现问题:", err)
-			break
-		}
-
 	}
+	//step2:将数据写入服务端
+	if err = server.WriteMessage(websocket.TextMessage, AesEncryptECB(buffer.Bytes(), GetNewPassword(key))); err != nil {
+		log.Println("写出现问题:", err)
+	}
+
+	buffer.Reset()
 }
 
 //读服务端数据到客户端
