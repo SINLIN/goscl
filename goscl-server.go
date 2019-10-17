@@ -26,12 +26,14 @@ var (
 	wg sync.WaitGroup
 
 	// key []byte = []byte("sdf44w5ef784478468sdf")
-	key string = "sdf44w5ef784478468sdf"
+	key            string = "sdf44w5ef784478468sdf"
+	ws_listen_addr string = ":3389"
+	ss_addr        string = "127.0.0.1:8135"
 )
 
 func main() {
 	http.HandleFunc("/ws", wsHander)
-	http.ListenAndServe(":137", nil)
+	http.ListenAndServe(ws_listen_addr, nil)
 }
 
 func wsHander(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +54,7 @@ func wsHander(w http.ResponseWriter, r *http.Request) {
 	log.Println("有客户端连接成功:", &conn)
 
 	//连接服务器
-	if conn, err = net.Dial("tcp", "127.0.0.1:8135"); err != nil {
+	if conn, err = net.Dial("tcp", ss_addr); err != nil {
 		log.Println(err)
 		return
 	}
@@ -104,7 +106,7 @@ func writeData(client *websocket.Conn, server net.Conn) {
 
 	defer wg.Done()
 
-	buff = make([]byte, 2048)
+	buff = make([]byte, 10*1024)
 
 	for {
 		//step1:从客户端读取数据

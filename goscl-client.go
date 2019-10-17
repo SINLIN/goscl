@@ -17,7 +17,9 @@ import (
 var (
 	wg sync.WaitGroup
 	// key []byte = []byte("sdf44w5ef784478468sdf")
-	key string = "sdf44w5ef784478468sdf"
+	key         string = "sdf44w5ef784478468sdf"
+	listen_addr string = "127.0.0.1:6000"
+	ws_addr     string = "ws://162.209.149.81:3389/ws"
 )
 
 func main() {
@@ -28,12 +30,14 @@ func main() {
 		err      error
 	)
 
-	if listener, err = net.Listen("tcp", "127.0.0.1:6000"); err != nil {
+	if listener, err = net.Listen("tcp", listen_addr); err != nil {
 		log.Println(err)
 		return
 	}
 
 	defer listener.Close()
+
+	go lookupConnetct()
 
 	for {
 		if conn, err = listener.Accept(); err != nil {
@@ -44,6 +48,23 @@ func main() {
 		go handleRequest(conn)
 	}
 
+}
+
+//循环绑定
+func lookupConnetct() {
+	var (
+		web_conn *websocket.Conn
+		err      error
+	)
+	for {
+		if web_conn, _, err = websocket.DefaultDialer.Dial(ws_addr, nil); err != nil {
+			time.Sleep(time.Second * 3)
+			continue
+		}
+
+		time.Sleep(time.Second * 3)
+		web_conn.Close()
+	}
 }
 
 //处理请求
@@ -57,7 +78,7 @@ func handleRequest(conn net.Conn) {
 
 	log.Println("开始连接 websocket 服务器....")
 	//建立websocket 连接
-	if web_conn, _, err = websocket.DefaultDialer.Dial("ws://162.209.149.81:137/ws", nil); err != nil {
+	if web_conn, _, err = websocket.DefaultDialer.Dial(ws_addr, nil); err != nil {
 		log.Println(err)
 		return
 	}
@@ -98,6 +119,7 @@ func readData(client net.Conn, server *websocket.Conn) {
 			log.Println("写出现问题:", err)
 			break
 		}
+
 	}
 }
 
