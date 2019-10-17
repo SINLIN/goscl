@@ -5,7 +5,7 @@ import (
 	"net"
 	"sync"
 
-	// "io"
+	"crypto/aes"
 	"log"
 	"net/http"
 
@@ -20,6 +20,8 @@ var (
 	}
 
 	wg sync.WaitGroup
+
+	key []byte = []byte("sdf44w5ef784478468sdf")
 )
 
 func main() {
@@ -45,7 +47,7 @@ func wsHander(w http.ResponseWriter, r *http.Request) {
 	log.Println("有客户端连接成功:", &conn)
 
 	//连接服务器
-	if conn, err = net.Dial("tcp", "192.168.1.80:8135"); err != nil {
+	if conn, err = net.Dial("tcp", "127.0.0.1:8135"); err != nil {
 		log.Println(err)
 		return
 	}
@@ -78,7 +80,7 @@ func readData(client *websocket.Conn, server net.Conn) {
 
 		// log.Println("收到来自websocket消息:", string(data))
 		if len(data) > 0 {
-			if _, err = server.Write(data); err != nil {
+			if _, err = server.Write(AesDecryptECB(data, key)); err != nil {
 				log.Println(err)
 				return
 			}
@@ -110,9 +112,53 @@ func writeData(client *websocket.Conn, server net.Conn) {
 		// log.Println("收到shadowsocks的消息", string(buff[:n]))
 
 		//step2:将数据写入服务端
-		if err = client.WriteMessage(websocket.TextMessage, buff[:n]); err != nil {
+		if err = client.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], key)); err != nil {
 			log.Println("写出现问题:", err)
 			break
 		}
 	}
+}
+
+// =================== ECB ======================
+func AesEncryptECB(origData []byte, key []byte) (encrypted []byte) {
+	cipher, _ := aes.NewCipher(generateKey(key))
+	length := (len(origData) + aes.BlockSize) / aes.BlockSize
+	plain := make([]byte, length*aes.BlockSize)
+	copy(plain, origData)
+	pad := byte(len(plain) - len(origData))
+	for i := len(origData); i < len(plain); i++ {
+		plain[i] = pad
+	}
+	encrypted = make([]byte, len(plain))
+	// 分组分块加密
+	for bs, be := 0, cipher.BlockSize(); bs <= len(origData); bs, be = bs+cipher.BlockSize(), be+cipher.BlockSize() {
+		cipher.Encrypt(encrypted[bs:be], plain[bs:be])
+	}
+
+	return encrypted
+}
+func AesDecryptECB(encrypted []byte, key []byte) (decrypted []byte) {
+	cipher, _ := aes.NewCipher(generateKey(key))
+	decrypted = make([]byte, len(encrypted))
+	//
+	for bs, be := 0, cipher.BlockSize(); bs < len(encrypted); bs, be = bs+cipher.BlockSize(), be+cipher.BlockSize() {
+		cipher.Decrypt(decrypted[bs:be], encrypted[bs:be])
+	}
+
+	trim := 0
+	if len(decrypted) > 0 {
+		trim = len(decrypted) - int(decrypted[len(decrypted)-1])
+	}
+
+	return decrypted[:trim]
+}
+func generateKey(key []byte) (genKey []byte) {
+	genKey = make([]byte, 16)
+	copy(genKey, key)
+	for i := 16; i < len(key); {
+		for j := 0; j < 16 && i < len(key); j, i = j+1, i+1 {
+			genKey[j] ^= key[i]
+		}
+	}
+	return genKey
 }
