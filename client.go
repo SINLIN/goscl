@@ -43,7 +43,6 @@ func main() {
 
 //处理请求
 func handleRequest(conn net.Conn) {
-
 	var (
 		web_conn *websocket.Conn
 		err      error
