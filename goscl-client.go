@@ -20,7 +20,7 @@ var (
 	// key []byte = []byte("sdf44w5ef784478468sdf")
 	key         string = "sdf44w5ef784478468sdf"
 	listen_addr string = "127.0.0.1:6000"
-	ws_addr     string = "ws://162.209.149.81:3389/ws"
+	ws_addr     string = "wss://server.oneso.win:3389/goscl"
 )
 
 func main() {
@@ -93,7 +93,7 @@ func handleRequest(conn net.Conn) {
 
 }
 
-//读客户端数据到服务端
+//读数据 local_ss -> websocket
 func readData(client net.Conn, server *websocket.Conn) {
 
 	var (
@@ -125,7 +125,7 @@ func readData(client net.Conn, server *websocket.Conn) {
 	buffer.Reset()
 }
 
-//读服务端数据到客户端
+//写数据 websocket -> local_ss
 func writeData(client net.Conn, server *websocket.Conn) {
 	var (
 		n    int

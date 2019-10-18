@@ -33,8 +33,8 @@ var (
 )
 
 func main() {
-	http.HandleFunc("/ws", wsHander)
-	http.ListenAndServe(ws_listen_addr, nil)
+	http.HandleFunc("/goscl", wsHander)
+	http.ListenAndServeTLS(ws_listen_addr, "server.crt", "server.key", nil)
 }
 
 func wsHander(w http.ResponseWriter, r *http.Request) {
