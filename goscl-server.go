@@ -23,8 +23,8 @@ var (
 		},
 	}
 
-	wg sync.WaitGroup
-
+	wg         sync.WaitGroup
+	conn_pools []net.Conn
 	// key []byte = []byte("sdf44w5ef784478468sdf")
 	key            string = "sdf44w5ef784478468sdf"
 	ws_listen_addr string = ":3389"
@@ -55,7 +55,7 @@ func wsHander(w http.ResponseWriter, r *http.Request) {
 	log.Println("有客户端连接成功:", &conn)
 
 	//连接服务器
-	if conn, err = net.Dial("tcp", ss_addr); err != nil {
+	if conn, err = GetConn(); err != nil {
 		log.Println(err)
 		return
 	}
@@ -83,7 +83,7 @@ func readData(client *websocket.Conn, server net.Conn) {
 		//step1: 从 websocket 读取数据
 		if _, buff, err = client.ReadMessage(); err != nil {
 			log.Println("读数据错误", err)
-			return
+			break
 		}
 
 		// log.Println("收到来自websocket ->ss消息:", buff)
@@ -91,7 +91,8 @@ func readData(client *websocket.Conn, server net.Conn) {
 		//step2: 将数据写入ss中
 		if _, err = server.Write(AesDecryptECB(buff, GetNewPassword(key))); err != nil {
 			log.Println(err)
-			return
+
+			break
 		}
 	}
 
@@ -108,12 +109,15 @@ func writeData(client *websocket.Conn, server net.Conn) {
 	defer wg.Done()
 	// log.Println("开始写数据 ss->websocket.....")
 
-	buff = make([]byte, 20*1024)
+	buff = make([]byte, 1024)
 
 	//step1:从客户端读取数据
 	for {
 		if n, err = server.Read(buff); n == 0 || err == io.EOF {
 			log.Println("客户端信息读取完成")
+			time.Sleep(time.Second * 3)
+			server.Close()
+			client.Close()
 			break
 		}
 
@@ -128,6 +132,43 @@ func writeData(client *websocket.Conn, server net.Conn) {
 	}
 
 }
+
+// =================== 链接池 ======================
+func GetConn() (net.Conn, error) {
+	var (
+		conn net.Conn
+		err  error
+	)
+	if len(conn_pools) == 0 {
+		if conn, err = net.Dial("tcp", ss_addr); err != nil {
+			log.Println(err)
+		}
+		conn_pools = append(conn_pools, conn)
+	}
+
+	if len(conn_pools) < 10 {
+		go CreateConnPools()
+	}
+
+	conn = conn_pools[0]
+	conn_pools = conn_pools[1:]
+	return conn, err
+}
+
+func CreateConnPools() {
+	var (
+		conn net.Conn
+		err  error
+	)
+	for i := 0; i < 15; i++ {
+		if conn, err = net.Dial("tcp", ss_addr); err != nil {
+			continue
+		}
+		conn_pools = append(conn_pools, conn)
+	}
+}
+
+// =================== 动态密码 ======================
 
 //每天生成新的密码
 func GetNewPassword(key string) []byte {
