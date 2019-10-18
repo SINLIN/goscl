@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/md5"
 	"encoding/hex"
@@ -20,7 +19,8 @@ var (
 	// key []byte = []byte("sdf44w5ef784478468sdf")
 	key         string = "sdf44w5ef784478468sdf"
 	listen_addr string = "127.0.0.1:6000"
-	ws_addr     string = "wss://server.oneso.win:3389/goscl"
+	ws_addr     string = "wss://server.oneso.win:3389/ws"
+	// ws_addr string = "wss://127.0.0.1:3389/ws"
 )
 
 func main() {
@@ -38,7 +38,7 @@ func main() {
 
 	defer listener.Close()
 
-	go lookupConnetct()
+	// go lookupConnetct()
 
 	for {
 		if conn, err = listener.Accept(); err != nil {
@@ -97,14 +97,13 @@ func handleRequest(conn net.Conn) {
 func readData(client net.Conn, server *websocket.Conn) {
 
 	var (
-		n      int
-		err    error
-		buff   []byte
-		buffer bytes.Buffer
+		n    int = -1
+		err  error
+		buff []byte
 	)
 	defer wg.Done()
 
-	buff = make([]byte, 2048)
+	buff = make([]byte, 10*1024)
 
 	//step1:从客户端读取数据
 	for {
@@ -112,46 +111,46 @@ func readData(client net.Conn, server *websocket.Conn) {
 			log.Println("客户端信息读取完成")
 			break
 		}
-		buffer.Write(buff[:n])
+
+		// log.Println("nnnnnnn:", n)
+
 		//debug:打印信息
-		// log.Println("收到客户端的消息", string(buff[:n]))
+		// log.Println("收到客户端的消息", buff[:n])
+
+		//step2:将数据写入服务端
+		if err = server.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(key))); err != nil {
+			log.Println("写出现问题:", err)
+			break
+		}
 
 	}
-	//step2:将数据写入服务端
-	if err = server.WriteMessage(websocket.TextMessage, AesEncryptECB(buffer.Bytes(), GetNewPassword(key))); err != nil {
-		log.Println("写出现问题:", err)
-	}
 
-	buffer.Reset()
 }
 
 //写数据 websocket -> local_ss
 func writeData(client net.Conn, server *websocket.Conn) {
 	var (
-		n    int
 		err  error
 		buff []byte
 	)
 	defer wg.Done()
-
 	for {
 		//step1: 从服务端读取数据
-		if n, buff, err = server.ReadMessage(); n == 0 || err != nil {
-			log.Println("读取来自 websocket 消息完成")
+		if _, buff, err = server.ReadMessage(); err != nil {
+			log.Println(err)
 			return
 		}
 
 		//debug
-		// log.Println("收到来自websocket的消息:", string(buff))
+		// log.Println("收到来自websocket的消息:", buff)
 
 		//step2: 将数据写入客户端
-		if len(buff) > 0 {
-			if _, err = client.Write(AesDecryptECB(buff, GetNewPassword(key))); err != nil {
-				log.Println(err)
-				return
-			}
+		if _, err = client.Write(AesDecryptECB(buff, GetNewPassword(key))); err != nil {
+			log.Println(err)
+			return
 		}
 	}
+
 }
 
 //每天生成新的密码

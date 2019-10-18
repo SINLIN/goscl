@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"io"
@@ -33,7 +32,8 @@ var (
 )
 
 func main() {
-	http.HandleFunc("/goscl", wsHander)
+	http.HandleFunc("/ws", wsHander)
+	// http.ListenAndServe(ws_listen_addr, nil)
 	http.ListenAndServeTLS(ws_listen_addr, "server.crt", "server.key", nil)
 }
 
@@ -72,41 +72,41 @@ func wsHander(w http.ResponseWriter, r *http.Request) {
 // 读数据 websocket -> ss
 func readData(client *websocket.Conn, server net.Conn) {
 	var (
-		n    int
-		data []byte
+		buff []byte
 		err  error
 	)
 
 	defer wg.Done()
 
+	// log.Println("开始读数据 websocket->ss.....")
 	for {
-		//读数据
-		if n, data, err = client.ReadMessage(); n == 0 || err == io.EOF {
+		//step1: 从 websocket 读取数据
+		if _, buff, err = client.ReadMessage(); err != nil {
 			log.Println("读数据错误", err)
 			return
 		}
 
-		// log.Println("收到来自websocket消息:", string(data))
-		if len(data) > 0 {
-			if _, err = server.Write(AesDecryptECB(data, GetNewPassword(key))); err != nil {
-				log.Println(err)
-				return
-			}
-		}
+		// log.Println("收到来自websocket ->ss消息:", buff)
 
+		//step2: 将数据写入ss中
+		if _, err = server.Write(AesDecryptECB(buff, GetNewPassword(key))); err != nil {
+			log.Println(err)
+			return
+		}
 	}
+
 }
 
 //写数据 ss -> websocket
 func writeData(client *websocket.Conn, server net.Conn) {
 	var (
-		n      int
-		err    error
-		buff   []byte
-		buffer bytes.Buffer
+		n    int = -1
+		err  error
+		buff []byte
 	)
 
 	defer wg.Done()
+	// log.Println("开始写数据 ss->websocket.....")
 
 	buff = make([]byte, 20*1024)
 
@@ -118,15 +118,15 @@ func writeData(client *websocket.Conn, server net.Conn) {
 		}
 
 		//debug:打印信息
-		// log.Println("收到shadowsocks的消息", string(buff[:n]))
-		buffer.Write(buff[:n])
+		// log.Println("收到ss->shadowsocks的消息", buff[:n])
 
-	}
-	//step2:将数据写入服务端
-	if err = client.WriteMessage(websocket.TextMessage, AesEncryptECB(buffer.Bytes(), GetNewPassword(key))); err != nil {
-		log.Println("写出现问题:", err)
+		//step2:将数据写入服务端
+		if err = client.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(key))); err != nil {
+			log.Println("写出现问题:", err)
 
+		}
 	}
+
 }
 
 //每天生成新的密码
