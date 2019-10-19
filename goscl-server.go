@@ -23,7 +23,6 @@ var (
 		},
 	}
 
-	wg         sync.WaitGroup
 	conn_pools []net.Conn
 	// key []byte = []byte("sdf44w5ef784478468sdf")
 	key            string = "sdf44w5ef784478468sdf"
@@ -39,38 +38,38 @@ func main() {
 
 func wsHander(w http.ResponseWriter, r *http.Request) {
 	var (
-		conn_web *websocket.Conn
-		conn     net.Conn
-
-		err error
+		client *websocket.Conn
+		server net.Conn
+		wg     sync.WaitGroup
+		err    error
 	)
 
 	log.Println("等待客户端的接入")
-	if conn_web, err = upgrader.Upgrade(w, r, nil); err != nil {
+	if client, err = upgrader.Upgrade(w, r, nil); err != nil {
 		log.Println(err)
 		return
 	}
 
-	defer conn_web.Close()
-	log.Println("有客户端连接成功:", &conn)
+	defer client.Close()
+	log.Println("有客户端连接成功:", &server)
 
 	//连接服务器
-	if conn, err = GetConn(); err != nil {
+	if server, err = GetConn(); err != nil {
 		log.Println(err)
 		return
 	}
-	defer conn.Close()
+	defer server.Close()
 
 	//读写数据
 	wg.Add(2)
-	go readData(conn_web, conn)
-	go writeData(conn_web, conn)
+	go readData(client, server, &wg)
+	go writeData(client, server, &wg)
 	wg.Wait()
 
 }
 
 // 读数据 websocket -> ss
-func readData(client *websocket.Conn, server net.Conn) {
+func readData(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
 	var (
 		buff []byte
 		err  error
@@ -99,7 +98,7 @@ func readData(client *websocket.Conn, server net.Conn) {
 }
 
 //写数据 ss -> websocket
-func writeData(client *websocket.Conn, server net.Conn) {
+func writeData(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
 	var (
 		n    int = -1
 		err  error
@@ -109,13 +108,13 @@ func writeData(client *websocket.Conn, server net.Conn) {
 	defer wg.Done()
 	// log.Println("开始写数据 ss->websocket.....")
 
-	buff = make([]byte, 1024)
+	buff = make([]byte, 3*1024)
 
 	//step1:从客户端读取数据
 	for {
 		if n, err = server.Read(buff); n == 0 || err == io.EOF {
 			log.Println("客户端信息读取完成")
-			time.Sleep(time.Second * 3)
+			time.Sleep(time.Second * 5)
 			server.Close()
 			client.Close()
 			break
