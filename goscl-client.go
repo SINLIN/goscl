@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 
 	// "net/http"
 	// _ "net/http/pprof" // 性能分析包引入
@@ -18,20 +19,27 @@ import (
 )
 
 var (
-	wss_conn_pools []*websocket.Conn
+	//Websocket 连接池
+	Conn_pools_websocket chan *websocket.Conn = make(chan *websocket.Conn, 5)
 
-	key         string = "sdf44w5ef784478468sdf"
-	listen_addr string = "127.0.0.1:6000"
-	ws_addr     string = "wss://server.oneso.win:3389/ws"
-	// ws_addr string = "wss://127.0.0.1:3389/ws"
+	//安全密钥 -> 用于再次加密和解密
+	Security_password string = "01dbc809-af12-5a28-b5b9-5341e2ca2198"
+
+	//本地监听地址
+	Addr_socks_listen string = "127.0.0.1:6000"
+
+	//远程 Webscoket 连接地址
+	Addr_remote_websocket_path string = "wss://server.oneso.win:3389/ws?transport=websocket&uuid=32"
+
+	//debug
+	//ws_addr string = "wss://127.0.0.1:3389/ws"
 )
 
 func main() {
 	var (
-		conn net.Conn
-
-		listener net.Listener
-		err      error
+		listener    net.Listener
+		conn_client net.Conn
+		err         error
 	)
 
 	//性能分析 http://127.0.0.1:6060/debug/pprof/
@@ -39,63 +47,65 @@ func main() {
 	// 	log.Println(http.ListenAndServe("localhost:6060", nil))
 	// }()
 
-	if listener, err = net.Listen("tcp", listen_addr); err != nil {
+	//绑定监听端口
+	if listener, err = net.Listen("tcp", Addr_socks_listen); err != nil {
 		log.Println(err)
 		return
 	}
 
 	defer listener.Close()
 
-	//返回链接变脏数据
-	// go reduceConn()
+	//创建 Websocket 连接：备用
+	go CreateWebsocketConn()
 
-	// go lookupConnetct()
-
+	//接收来自客户端的连接并处理
 	for {
-		if conn, err = listener.Accept(); err != nil {
+		if conn_client, err = listener.Accept(); err != nil {
 			log.Println(err)
 			continue
 		}
-		log.Println("有客户端接入:", &conn)
-		go handleRequest(conn)
+		log.Println("有客户端接入:", &conn_client)
+
+		go HandleClientRequest(conn_client)
+
 	}
 
 }
 
-//处理请求
-func handleRequest(client_conn net.Conn) {
-
+//处理客户端请求
+func HandleClientRequest(conn_client net.Conn) {
 	var (
-		wg       sync.WaitGroup
-		web_conn *websocket.Conn
-		err      error
+		wg             sync.WaitGroup
+		conn_websocket *websocket.Conn
+		err            error
 	)
-	defer client_conn.Close()
+	defer conn_client.Close()
 
 	log.Println()
 	log.Println("开始连接 websocket 服务器....")
 
-	//防止创建失败
-
-	if web_conn, err = GetWebsocketConn(); err != nil {
+	//获取 Websocket conn
+	if conn_websocket, err = GetWebsocketConn(); err != nil {
 		log.Println(err)
 
 	}
+	defer conn_websocket.Close()
 
-	defer web_conn.Close()
+	log.Println("连接 websocket 成功:", &conn_websocket)
 
-	log.Println("连接 websocket 成功:", &web_conn)
-
+	//读写
 	wg.Add(2)
-	go readData(client_conn, web_conn, &wg)
-	go writeData(client_conn, web_conn, &wg)
+	go StreamClientToServer(conn_client, conn_websocket, &wg)
+	go StreamServerToClient(conn_client, conn_websocket, &wg)
 	wg.Wait()
+
+	//读写完成 -> 回收内存
 	log.Println("................. 内存释放完成............")
 
 }
 
-//读数据 local_ss -> websocket
-func readData(client net.Conn, server *websocket.Conn, wg *sync.WaitGroup) {
+//数据流 local_ss -> websocket
+func StreamClientToServer(client net.Conn, server *websocket.Conn, wg *sync.WaitGroup) {
 	var (
 		n    int = -1
 		err  error
@@ -121,7 +131,7 @@ func readData(client net.Conn, server *websocket.Conn, wg *sync.WaitGroup) {
 		// log.Println(&client, ":收到客户端的消息", buff[:n])
 
 		//step2:将数据写入服务端
-		if err = server.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(key))); err != nil {
+		if err = server.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(Security_password))); err != nil {
 			log.Println("写出现问题:", err)
 			break
 		}
@@ -130,8 +140,8 @@ func readData(client net.Conn, server *websocket.Conn, wg *sync.WaitGroup) {
 
 }
 
-//写数据 websocket -> local_ss
-func writeData(client net.Conn, server *websocket.Conn, wg *sync.WaitGroup) {
+//数据流 websocket -> local_ss
+func StreamServerToClient(client net.Conn, server *websocket.Conn, wg *sync.WaitGroup) {
 	var (
 		err  error
 		buff []byte
@@ -149,10 +159,10 @@ func writeData(client net.Conn, server *websocket.Conn, wg *sync.WaitGroup) {
 		}
 
 		//debug:打印调试信息
-		// log.Println(&server, ":收到来自websocket的消息:", buff)
+		//log.Println(&server, ":收到来自websocket的消息:", buff)
 
 		//step2: 将数据写入客户端
-		if _, err = client.Write(AesDecryptECB(buff, GetNewPassword(key))); err != nil {
+		if _, err = client.Write(AesDecryptECB(buff, GetNewPassword(Security_password))); err != nil {
 			log.Println(err)
 
 			break
@@ -163,68 +173,58 @@ func writeData(client net.Conn, server *websocket.Conn, wg *sync.WaitGroup) {
 }
 
 // =================== 缓存池 ======================
+
+//创建 Websocket 连接
+func CreateWebsocketConn() {
+	var (
+		conn_websocket        *websocket.Conn
+		header_request        http.Header = make(map[string][]string)
+		cookie_userinfo       string      = "__WebsocketUserid="
+		addr_websocket_remote string
+		data_random           string
+		id_user               string
+		err                   error
+	)
+	for {
+		//获取时间戳数据
+		data_random = string(GetNewPassword(strconv.FormatInt(time.Now().UnixNano(), 16)))
+
+		//配置用户信息
+		id_user = data_random
+		cookie_userinfo = data_random
+		addr_websocket_remote = Addr_remote_websocket_path + id_user
+
+		//添加请求头
+		header_request["Host"] = []string{"server.oneso.win:3389"}
+		header_request["Origin"] = []string{"https://oneso.win"}
+		header_request["user-agent"] = []string{"Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36"}
+		header_request["Cookie"] = []string{cookie_userinfo}
+
+		//获取 Websocket conn
+		for {
+			if conn_websocket, _, err = websocket.DefaultDialer.Dial(addr_websocket_remote, header_request); err != nil {
+				log.Println("获取Websocket失败:", err)
+				continue
+			}
+			break
+		}
+
+		//保存到连接池
+		Conn_pools_websocket <- conn_websocket
+
+	}
+}
+
+// 获取 Websocket 连接
 func GetWebsocketConn() (*websocket.Conn, error) {
 	var (
-		web_conn *websocket.Conn
-		err      error
+		conn_websocket *websocket.Conn
+		err            error
 	)
-	//自动创建连接池
-	if len(wss_conn_pools) > 5 {
-		wss_conn_pools = make([]*websocket.Conn, 0)
-	}
 
-	//如果没有马上创建一条
-	if len(wss_conn_pools) == 0 {
-		CreateWebsocket()
-	}
+	conn_websocket = <-Conn_pools_websocket
 
-	//为下次准备
-	go CreateWebsocket()
-
-	//取websocket conn
-	web_conn = wss_conn_pools[0]
-	wss_conn_pools = wss_conn_pools[1:]
-
-	return web_conn, err
-}
-
-//减少连接
-func reduceConn() {
-	for {
-		time.Sleep(10)
-		_, _ = GetWebsocketConn()
-	}
-}
-
-//创建websocket
-func CreateWebsocket() {
-	var (
-		web_conn *websocket.Conn
-		err      error
-	)
-	for {
-		if web_conn, _, err = websocket.DefaultDialer.Dial(ws_addr, nil); err != nil {
-			log.Println(err)
-			continue
-		}
-		break
-	}
-	wss_conn_pools = append(wss_conn_pools, web_conn)
-}
-
-//创建连接池
-func CreateWebsocketConnPools() {
-	var (
-		web_conn *websocket.Conn
-		err      error
-	)
-	for i := 0; i < 10; i++ {
-		if web_conn, _, err = websocket.DefaultDialer.Dial(ws_addr, nil); err != nil {
-			log.Println(err)
-			continue
-		}
-		wss_conn_pools = append(wss_conn_pools, web_conn)
-	}
+	return conn_websocket, err
 }
 
 // =================== 动态密码 ======================
@@ -234,7 +234,6 @@ func GetNewPassword(key string) []byte {
 	h := md5.New()
 	h.Write([]byte(str))
 	return []byte(hex.EncodeToString(h.Sum(nil)))
-
 }
 
 // =================== ECB ======================

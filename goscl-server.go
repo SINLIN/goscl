@@ -23,53 +23,63 @@ var (
 		},
 	}
 
-	conn_pools []net.Conn
+	conn_pools            []net.Conn
+	Security_password     string = "01dbc809-af12-5a28-b5b9-5341e2ca2198"
+	Addr_websocket_listen string = ":3389"
+	Addr_ss               string = "127.0.0.1:8135"
+
+	//debug
 	// key []byte = []byte("sdf44w5ef784478468sdf")
-	key            string = "sdf44w5ef784478468sdf"
-	ws_listen_addr string = ":3389"
-	ss_addr        string = "127.0.0.1:8135"
 )
 
 func main() {
+
 	http.HandleFunc("/ws", wsHander)
+
+	//未加密
 	// http.ListenAndServe(ws_listen_addr, nil)
-	http.ListenAndServeTLS(ws_listen_addr, "server.crt", "server.key", nil)
+
+	//加密
+	http.ListenAndServeTLS(Addr_websocket_listen, "server.crt", "server.key", nil)
 }
 
 func wsHander(w http.ResponseWriter, r *http.Request) {
 	var (
-		client *websocket.Conn
-		server net.Conn
-		wg     sync.WaitGroup
-		err    error
+		conn_websocket *websocket.Conn
+		conn_server    net.Conn
+		wg             sync.WaitGroup
+		err            error
 	)
 
 	log.Println("等待客户端的接入")
-	if client, err = upgrader.Upgrade(w, r, nil); err != nil {
+
+	if conn_websocket, err = upgrader.Upgrade(w, r, nil); err != nil {
 		log.Println(err)
 		return
 	}
+	defer conn_websocket.Close()
 
-	defer client.Close()
-	log.Println("有客户端连接成功:", &server)
+	log.Println("有客户端连接成功:", &conn_websocket)
 
-	//连接服务器
-	if server, err = GetConn(); err != nil {
+	//连接ss服务器
+	if conn_server, err = net.Dial("tcp", Addr_ss); err != nil {
 		log.Println(err)
 		return
 	}
-	defer server.Close()
+	defer conn_server.Close()
 
 	//读写数据
 	wg.Add(2)
-	go readData(client, server, &wg)
-	go writeData(client, server, &wg)
+	go StreamClientToServer(conn_websocket, conn_server, &wg)
+	go StreamServerToClient(conn_websocket, conn_server, &wg)
 	wg.Wait()
+
+	log.Println("------------ 释放内存 ----------------")
 
 }
 
-// 读数据 websocket -> ss
-func readData(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
+// 数据流 websocket -> ss
+func StreamClientToServer(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
 	var (
 		buff []byte
 		err  error
@@ -81,24 +91,24 @@ func readData(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
 	for {
 		//step1: 从 websocket 读取数据
 		if _, buff, err = client.ReadMessage(); err != nil {
-			log.Println("读数据错误", err)
+			log.Println("Websocket读数据错误:", err)
 			break
 		}
 
+		//debug
 		// log.Println("收到来自websocket ->ss消息:", buff)
 
 		//step2: 将数据写入ss中
-		if _, err = server.Write(AesDecryptECB(buff, GetNewPassword(key))); err != nil {
+		if _, err = server.Write(AesDecryptECB(buff, GetNewPassword(Security_password))); err != nil {
 			log.Println(err)
-
 			break
 		}
 	}
 
 }
 
-//写数据 ss -> websocket
-func writeData(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
+//数据流 ss -> websocket
+func StreamServerToClient(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
 	var (
 		n    int = -1
 		err  error
@@ -113,7 +123,7 @@ func writeData(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
 	//step1:从客户端读取数据
 	for {
 		if n, err = server.Read(buff); n == 0 || err == io.EOF {
-			log.Println("客户端信息读取完成")
+			log.Println("SS 数据读取完成")
 			time.Sleep(time.Second * 5)
 			server.Close()
 			client.Close()
@@ -124,47 +134,12 @@ func writeData(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
 		// log.Println("收到ss->shadowsocks的消息", buff[:n])
 
 		//step2:将数据写入服务端
-		if err = client.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(key))); err != nil {
+		if err = client.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(Security_password))); err != nil {
 			log.Println("写出现问题:", err)
 
 		}
 	}
 
-}
-
-// =================== 链接池 ======================
-func GetConn() (net.Conn, error) {
-	var (
-		conn net.Conn
-		err  error
-	)
-	if len(conn_pools) == 0 {
-		if conn, err = net.Dial("tcp", ss_addr); err != nil {
-			log.Println(err)
-		}
-		conn_pools = append(conn_pools, conn)
-	}
-
-	if len(conn_pools) < 10 {
-		go CreateConnPools()
-	}
-
-	conn = conn_pools[0]
-	conn_pools = conn_pools[1:]
-	return conn, err
-}
-
-func CreateConnPools() {
-	var (
-		conn net.Conn
-		err  error
-	)
-	for i := 0; i < 15; i++ {
-		if conn, err = net.Dial("tcp", ss_addr); err != nil {
-			continue
-		}
-		conn_pools = append(conn_pools, conn)
-	}
 }
 
 // =================== 动态密码 ======================
