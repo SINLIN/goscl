@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/zlib"
 	"crypto/aes"
 	"crypto/md5"
 	"encoding/hex"
@@ -107,16 +109,17 @@ func HandleClientRequest(conn_client net.Conn) {
 //数据流 local_ss -> websocket
 func StreamClientToServer(client net.Conn, server *websocket.Conn, wg *sync.WaitGroup) {
 	var (
-		n    int = -1
-		err  error
-		buff []byte
+		n     int = -1
+		err   error
+		buff  []byte
+		cache []byte
 	)
 
 	defer wg.Done()
 	defer client.Close()
 	defer server.Close()
 	defer log.Println(&client, ":读数据结束")
-	buff = make([]byte, 256)
+	buff = make([]byte, 512)
 
 	//step1:从客户端读取数据
 	for {
@@ -130,8 +133,12 @@ func StreamClientToServer(client net.Conn, server *websocket.Conn, wg *sync.Wait
 		// log.Println(&client, ":读取到字节数:", n)
 		// log.Println(&client, ":收到客户端的消息", buff[:n])
 
+		//数据处理
+		cache = AesEncryptECB(buff[:n], GetNewPassword(Security_password))
+		cache = DoZlibCompress(cache)
+
 		//step2:将数据写入服务端
-		if err = server.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(Security_password))); err != nil {
+		if err = server.WriteMessage(websocket.TextMessage, cache); err != nil {
 			log.Println("写出现问题:", err)
 			break
 		}
@@ -143,8 +150,9 @@ func StreamClientToServer(client net.Conn, server *websocket.Conn, wg *sync.Wait
 //数据流 websocket -> local_ss
 func StreamServerToClient(client net.Conn, server *websocket.Conn, wg *sync.WaitGroup) {
 	var (
-		err  error
-		buff []byte
+		err   error
+		buff  []byte
+		cache []byte
 	)
 	defer wg.Done()
 	defer client.Close()
@@ -161,8 +169,12 @@ func StreamServerToClient(client net.Conn, server *websocket.Conn, wg *sync.Wait
 		//debug:打印调试信息
 		//log.Println(&server, ":收到来自websocket的消息:", buff)
 
+		//数据处理
+		cache = DoZlibUnCompress(buff)
+		cache = AesDecryptECB(cache, GetNewPassword(Security_password))
+
 		//step2: 将数据写入客户端
-		if _, err = client.Write(AesDecryptECB(buff, GetNewPassword(Security_password))); err != nil {
+		if _, err = client.Write(cache); err != nil {
 			log.Println(err)
 
 			break
@@ -225,6 +237,25 @@ func GetWebsocketConn() (*websocket.Conn, error) {
 	conn_websocket = <-Conn_pools_websocket
 
 	return conn_websocket, err
+}
+
+// =================== 数据压缩 ======================
+//进行zlib压缩
+func DoZlibCompress(src []byte) []byte {
+	var in bytes.Buffer
+	w := zlib.NewWriter(&in)
+	w.Write(src)
+	w.Close()
+	return in.Bytes()
+}
+
+//进行zlib解压缩
+func DoZlibUnCompress(compressSrc []byte) []byte {
+	b := bytes.NewReader(compressSrc)
+	var out bytes.Buffer
+	r, _ := zlib.NewReader(b)
+	io.Copy(&out, r)
+	return out.Bytes()
 }
 
 // =================== 动态密码 ======================

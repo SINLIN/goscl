@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/zlib"
 	"crypto/md5"
 	"encoding/hex"
 	"io"
@@ -81,8 +83,9 @@ func wsHander(w http.ResponseWriter, r *http.Request) {
 // 数据流 websocket -> ss
 func StreamClientToServer(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
 	var (
-		buff []byte
-		err  error
+		buff  []byte
+		cache []byte
+		err   error
 	)
 
 	defer wg.Done()
@@ -97,9 +100,12 @@ func StreamClientToServer(client *websocket.Conn, server net.Conn, wg *sync.Wait
 
 		//debug
 		// log.Println("收到来自websocket ->ss消息:", buff)
+		//数据处理
+		cache = DoZlibUnCompress(buff)
+		cache = AesDecryptECB(cache, GetNewPassword(Security_password))
 
 		//step2: 将数据写入ss中
-		if _, err = server.Write(AesDecryptECB(buff, GetNewPassword(Security_password))); err != nil {
+		if _, err = server.Write(cache); err != nil {
 			log.Println(err)
 			break
 		}
@@ -110,9 +116,10 @@ func StreamClientToServer(client *websocket.Conn, server net.Conn, wg *sync.Wait
 //数据流 ss -> websocket
 func StreamServerToClient(client *websocket.Conn, server net.Conn, wg *sync.WaitGroup) {
 	var (
-		n    int = -1
-		err  error
-		buff []byte
+		n     int = -1
+		err   error
+		buff  []byte
+		cache []byte
 	)
 
 	defer wg.Done()
@@ -132,14 +139,36 @@ func StreamServerToClient(client *websocket.Conn, server net.Conn, wg *sync.Wait
 
 		//debug:打印信息
 		// log.Println("收到ss->shadowsocks的消息", buff[:n])
+		//数据处理
+		cache = AesEncryptECB(buff[:n], GetNewPassword(Security_password))
+		cache = DoZlibCompress(cache)
 
 		//step2:将数据写入服务端
-		if err = client.WriteMessage(websocket.TextMessage, AesEncryptECB(buff[:n], GetNewPassword(Security_password))); err != nil {
+		if err = client.WriteMessage(websocket.TextMessage, cache); err != nil {
 			log.Println("写出现问题:", err)
 
 		}
 	}
 
+}
+
+// =================== 数据压缩 ======================
+//进行zlib压缩
+func DoZlibCompress(src []byte) []byte {
+	var in bytes.Buffer
+	w := zlib.NewWriter(&in)
+	w.Write(src)
+	w.Close()
+	return in.Bytes()
+}
+
+//进行zlib解压缩
+func DoZlibUnCompress(compressSrc []byte) []byte {
+	b := bytes.NewReader(compressSrc)
+	var out bytes.Buffer
+	r, _ := zlib.NewReader(b)
+	io.Copy(&out, r)
+	return out.Bytes()
 }
 
 // =================== 动态密码 ======================
